@@ -13,97 +13,102 @@ from config import Verbose
 # You only need to modify the TreeNode!
 class TreeNode:
     def __init__(self, param, parent=None):
-        # store children as a list of (GameAction, TreeNode)
+        # children: list of (GameAction, TreeNode)
         self.children: list[tuple] = []
         self.parent = parent
         self.results: list[float] = []
         self.param = param
 
-    # one MCTS iteration
     def step(self, state: BattleState):
         self.select(state)
 
-    # pick the action with highest average score
     def get_best(self, state: BattleState):
         best_action = None
         best_avg = -float('inf')
-        for action, node in self.children:
+        for ga, node in self.children:
             if not node.results:
                 continue
             avg = sum(node.results) / len(node.results)
             if avg > best_avg:
                 best_avg = avg
-                best_action = action
+                best_action = ga
         return best_action or random.choice(state.get_actions())
 
-    # debug-print
     def print_tree(self, indent=0):
         spacer = ' ' * indent
-        for action, node in self.children:
+        for ga, node in self.children:
             visits = len(node.results)
             avg = sum(node.results) / visits if visits else 0.0
-            print(f"{spacer}{action}: visits={visits}, avg={avg:.3f}")
+            print(f"{spacer}{ga}: visits={visits}, avg={avg:.3f}")
             node.print_tree(indent + 2)
 
-    # selection → expansion or recurse
     def select(self, state: BattleState):
-        # 1) if terminal, backpropagate and stop
+        # 1) terminal? record and stop
         if state.ended():
             self.backpropagate(self.score(state))
             return
 
         actions = state.get_actions()
-        # 2) find unexplored actions
-        explored = [a for a, _ in self.children]
-        unexplored = [a for a in actions if a not in explored]
+        explored = [ga for ga, _ in self.children]
+        unexplored = [ga for ga in actions if ga not in explored]
 
         if unexplored:
-            # expand one new child
             self.expand(state, unexplored)
         else:
-            # fully expanded: pick via UCB-1
-            total_visits = sum(len(n.results) for _, n in self.children)
-            best_val = -float('inf')
-            best_act = best_node = None
+            # UCB-1 selection
+            total = sum(len(n.results) for _, n in self.children)
+            best_ucb = -float('inf')
+            best_ga = best_node = None
 
-            for action, node in self.children:
-                visits = len(node.results)
-                avg = sum(node.results) / visits
-                ucb = avg + self.param * math.sqrt(2 * math.log(total_visits) / visits)
-                if ucb > best_val:
-                    best_val = ucb
-                    best_act, best_node = action, node
+            for ga, node in self.children:
+                v = len(node.results)
+                mean = sum(node.results) / v
+                ucb = mean + self.param * math.sqrt(2 * math.log(total) / v)
+                if ucb > best_ucb:
+                    best_ucb, best_ga, best_node = ucb, ga, node
 
-            # descend into best child
-            state.step(best_act)
+            # **apply** that action to the sample‐state
+            self._apply(state, best_ga)
             best_node.select(state)
 
-    # add a child for one unexplored action, rollout, backpropagate
     def expand(self, state: BattleState, available: list):
-        action = random.choice(available)
+        ga = random.choice(available)
         child = TreeNode(self.param, parent=self)
-        self.children.append((action, child))
+        self.children.append((ga, child))
 
-        state.step(action)
+        # **apply** that action
+        self._apply(state, ga)
         result = child.rollout(state)
         child.backpropagate(result)
 
-    # random playout to terminal
     def rollout(self, state: BattleState):
         while not state.ended():
-            action = random.choice(state.get_actions())
-            state.step(action)
+            ga = random.choice(state.get_actions())
+            self._apply(state, ga)
         return self.score(state)
 
-    # record result here and bubble up
     def backpropagate(self, result: float):
         self.results.append(result)
         if self.parent:
             self.parent.backpropagate(result)
 
-    # default evaluation
     def score(self, state: BattleState):
         return state.score()
+
+    def _apply(self, state: BattleState, ga):
+        """ Convert GameAction → PlayCard/EndAgentTurn and mutate `state`. """
+        # end‐turn
+        if ga.card is None:
+            state.tick_player(EndAgentTurn())
+            return
+
+        name, upg = ga.card
+        for idx, c in enumerate(state.hand):
+            if c.name == name and c.upgrade_count == upg:
+                state.tick_player(PlayCard(idx))
+                return
+        # (This really should never happen, but just in case…)
+        state.tick_player(EndAgentTurn())
 
 
 # You do not have to modify the MCTSAgent (but you can)

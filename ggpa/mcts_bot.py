@@ -97,17 +97,25 @@ class TreeNode:
 
     def _apply(self, state: BattleState, ga):
         """ Convert GameAction → PlayCard/EndAgentTurn and mutate `state`. """
-        # end‐turn
+    
+    # end-turn
         if ga.card is None:
             state.tick_player(EndAgentTurn())
             return
 
         name, upg = ga.card
+
         for idx, c in enumerate(state.hand):
             if c.name == name and c.upgrade_count == upg:
-                state.tick_player(PlayCard(idx))
+                if not c.is_playable(state, state):
+                    return  # Skip unplayable card
+                try:
+                    state.tick_player(PlayCard(idx))
+                except AssertionError:
+                    return
                 return
-        # (This really should never happen, but just in case…)
+
+    # (This really should never happen, but just in case…)
         state.tick_player(EndAgentTurn())
 
 
